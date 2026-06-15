@@ -291,6 +291,45 @@ with st.sidebar:
         mask &= charges_raw != 0
     charges = charges_raw[mask]
 
+    # ── 03c Intervalle de valeurs analysées ───────────────────────────────
+    # Restreint les données utilisées par TOUTES les méthodes (différent de la
+    # « Plage d'affichage » qui ne zoome que l'axe x des graphiques).
+    st.markdown("**Intervalle de valeurs analysées**")
+    range_note = None
+    _cf = charges[np.isfinite(charges)]
+    if len(_cf) and float(np.min(_cf)) < float(np.max(_cf)):
+        _vmin, _vmax = float(np.min(_cf)), float(np.max(_cf))
+        range_mode = st.radio(
+            "Mode de bornes", ["€", "Percentiles"],
+            horizontal=True, key="range_mode", label_visibility="collapsed",
+        )
+        if range_mode == "€":
+            lo_e, hi_e = st.slider(
+                "Bornes (€)", min_value=_vmin, max_value=_vmax,
+                value=(_vmin, _vmax),
+                step=max(1000.0, (_vmax - _vmin) / 100),
+                format="%.0f", key="range_eur", label_visibility="collapsed",
+            )
+            range_active = (lo_e, hi_e) != (_vmin, _vmax)
+            if range_active:
+                range_note = f"{lo_e/1e3:.0f}–{hi_e/1e3:.0f} k€"
+        else:
+            lo_p, hi_p = st.slider(
+                "Bornes (percentiles %)", min_value=0, max_value=100,
+                value=(0, 100), step=1, format="%d %%",
+                key="range_pct", label_visibility="collapsed",
+            )
+            lo_e = float(np.nanpercentile(_cf, lo_p))
+            hi_e = float(np.nanpercentile(_cf, hi_p))
+            range_active = (lo_p, hi_p) != (0, 100)
+            if range_active:
+                range_note = f"P{lo_p}–P{hi_p}"
+        if range_active:
+            charges = charges[(charges >= lo_e) & (charges <= hi_e)]
+    st.caption(f"Intervalle : {range_note}" if range_note else "Intervalle : complet")
+
+    st.divider()
+
     n_total = len(df_filtered)
     n = len(charges)
 
@@ -349,7 +388,7 @@ with st.sidebar:
     selected_methods = st.multiselect(
         "Méthodes à analyser",
         options=ALL_METHODS,
-        default=st.session_state.get("methods_sel", ALL_METHODS),
+        default=st.session_state.get("methods_sel", []),
         label_visibility="collapsed",
     )
     st.session_state["methods_sel"] = selected_methods
@@ -405,6 +444,8 @@ st.markdown("""
 # ─── Statistiques descriptives ───────────────────────────────────────────────
 _n_nan = int(np.sum(np.isnan(charges)))
 _filter_note = f"{n_total:,} lignes après filtres · {n:,} sélectionnées"
+if range_note:
+    _filter_note += f" · intervalle {range_note}"
 if _n_nan:
     _filter_note += f" (dont {_n_nan:,} NaN)"
 st.markdown(
@@ -428,20 +469,43 @@ _s2[3].metric("Maximum",       fmt_M(float(np.nanmax(charges))))
 
 st.markdown("<div style='margin-top:8px'></div>", unsafe_allow_html=True)
 
-# ─── Calcul des méthodes sélectionnées (mis en cache) ───────────────────────
+# ─── Calcul des méthodes sélectionnées (mis en cache, une entrée par méthode) ──
 # _cv : incrémenter si l'une des fonctions compute() des modules change
-@st.cache_data(show_spinner=False)
-def compute_all(c_bytes, methods, _cv="5"):
-    ch = np.frombuffer(c_bytes, dtype=np.float64)
-    ch = np.sort(ch)
-    result = {}
-    if "MRL"          in methods: result["mrl_df"]   = mrl.compute(ch)
-    if "Hill"         in methods: result["hill_df"]  = hill.compute(ch)
-    if "Gerstengarbe" in methods: result["gers_res"] = gerstengarbe.compute(ch)
-    if "GPD Stabilité" in methods: result["gpd_df"]  = gpd_stability.compute(ch)
-    if "MCDA"         in methods: result["mcda_res"] = mcda.compute(ch)
-    return result
+_RESULT_KEY = {"MRL": "mrl_df", "Hill": "hill_df", "Gerstengarbe": "gers_res",
+               "GPD Stabilité": "gpd_df", "MCDA": "mcda_res"}
 
+
+@st.cache_data(show_spinner=False)
+def compute_method(method: str, c_bytes: bytes, _cv: str = "5"):
+    ch = np.sort(np.frombuffer(c_bytes, dtype=np.float64))
+    if method == "MRL":           return mrl.compute(ch)
+    if method == "Hill":          return hill.compute(ch)
+    if method == "Gerstengarbe":  return gerstengarbe.compute(ch)
+    if method == "GPD Stabilité": return gpd_stability.compute(ch)
+    if method == "MCDA":          return mcda.compute(ch)
+
+
+# ─── Porte « Lancer l'analyse » : rien ne se calcule tant que l'utilisateur ──
+# n'a pas cliqué. La signature des données réarme la porte à tout changement de
+# base/colonne/filtre (mais pas au déplacement de u* ni à l'ajout d'une méthode).
+_analysis_sig = (uploaded.name, sheet_name, col_selected, n, range_note,
+                 excl_nan, excl_neg, excl_zero, tuple(sorted(applied_filters)))
+if st.session_state.get("analysis_sig") != _analysis_sig:
+    st.session_state["analysis_sig"] = _analysis_sig
+    st.session_state["analysis_ran"] = False
+
+if not selected_methods:
+    st.info("Sélectionnez au moins une méthode dans le panneau latéral, "
+            "puis cliquez sur « Lancer l'analyse ».")
+    st.stop()
+
+if not st.session_state.get("analysis_ran"):
+    if st.button("Lancer l'analyse", type="primary"):
+        st.session_state["analysis_ran"] = True
+    else:
+        st.info("Cliquez sur « Lancer l'analyse » pour calculer les "
+                "méthodes sélectionnées.")
+        st.stop()
 
 # Gerstengarbe est en O(n²) : on prévient avant un calcul potentiellement long
 # (le résultat est ensuite mis en cache, donc une seule fois par jeu de données).
@@ -454,8 +518,11 @@ if "Gerstengarbe" in selected_methods and n > GERS_WARN_N:
         icon="⏳",
     )
 
+computed = {}
 with st.spinner("Calcul des méthodes en cours…"):
-    computed = compute_all(charges.tobytes(), tuple(selected_methods))
+    for _m in selected_methods:
+        if _m in _RESULT_KEY:
+            computed[_RESULT_KEY[_m]] = compute_method(_m, charges.tobytes())
 
 
 @st.cache_data(show_spinner=False)
@@ -683,10 +750,6 @@ TAB_DESC = {
                      "naturelles. Les seuils détectés sont reconvertis en €."),
 }
 
-if not selected_methods:
-    st.info("Sélectionnez au moins une méthode dans le panneau latéral pour afficher les graphiques.")
-    st.stop()
-
 tabs = st.tabs(selected_methods + ["Synthèse"])
 tab_map = {m: t for m, t in zip(selected_methods, tabs)}
 synth_tab = tabs[-1]
@@ -837,6 +900,7 @@ with synth_tab:
     meta["Variable analysée"] = col_selected
     meta["Observations"]      = f"{n:,} / {n_total:,} après filtres"
     meta["Filtres appliqués"] = _filt_str
+    meta["Intervalle analysé"] = range_note or "Complet"
     meta["Exclusions"]        = _excl_str
     meta["Date"]              = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
 

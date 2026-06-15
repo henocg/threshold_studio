@@ -85,6 +85,9 @@ def plot(result: dict, u_selected: float) -> go.Figure:
 
     ALT_COLORS = [ORANGE, PURPLE, VERT, "#C53B5A"]
 
+    # CDF empirique (fonction de répartition) : proportion cumulée de sinistres ≤ x.
+    ecdf = np.arange(1, len(c) + 1) / len(c) * 100 if len(c) else np.array([])
+
     fig = make_subplots(
         rows=1, cols=2,
         subplot_titles=[
@@ -92,6 +95,7 @@ def plot(result: dict, u_selected: float) -> go.Figure:
             f"(B) Jenks Natural Breaks : sur {_scale}",
         ],
         horizontal_spacing=0.12,
+        specs=[[{"secondary_y": True}, {"secondary_y": True}]],
     )
 
     for col_i, (breaks, label) in [(1, (pelt_u, "PELT")), (2, (jenks_vals, "Jenks"))]:
@@ -100,7 +104,14 @@ def plot(result: dict, u_selected: float) -> go.Figure:
             marker_color=NAVY, opacity=0.65,
             name="Distribution", showlegend=(col_i == 1),
             hovertemplate="[%{x:.0f} k€]  Count : %{y}<extra></extra>",
-        ), row=1, col=col_i)
+        ), row=1, col=col_i, secondary_y=False)
+
+        fig.add_trace(go.Scatter(
+            x=c / 1e3, y=ecdf,
+            mode="lines", line=dict(color="#0B1B36", width=2),
+            name="Fréquence cumulée", showlegend=(col_i == 1),
+            hovertemplate="[%{x:.0f} k€]  CDF : %{y:.1f} %<extra></extra>",
+        ), row=1, col=col_i, secondary_y=True)
 
         for i, bv in enumerate(breaks):
             color = ALT_COLORS[i % len(ALT_COLORS)]
@@ -121,6 +132,8 @@ def plot(result: dict, u_selected: float) -> go.Figure:
         )
 
     fig.update_xaxes(title_text="Charge (k€)")
-    fig.update_yaxes(title_text="Nombre de sinistres")
+    fig.update_yaxes(title_text="Nombre de sinistres", secondary_y=False)
+    fig.update_yaxes(title_text="Fréquence cumulée (%)", range=[0, 100],
+                     showgrid=False, secondary_y=True)
     apply_layout(fig, height=440, margin_t=50)
     return fig
