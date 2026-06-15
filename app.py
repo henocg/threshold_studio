@@ -385,13 +385,14 @@ with st.sidebar:
     # ── 05 Méthodes ───────────────────────────────────────────────────────
     st.markdown("**05 : Méthodes**")
     ALL_METHODS = ["MRL", "Hill", "Gerstengarbe", "GPD Stabilité", "MCDA", "PELT & Jenks"]
+    # État géré par Streamlit via key="methods_sel" (évite le décalage d'un rerun
+    # qu'introduisait le couple default=... + écriture manuelle de session_state).
     selected_methods = st.multiselect(
         "Méthodes à analyser",
         options=ALL_METHODS,
-        default=st.session_state.get("methods_sel", []),
         label_visibility="collapsed",
+        key="methods_sel",
     )
-    st.session_state["methods_sel"] = selected_methods
 
     st.divider()
 
@@ -485,27 +486,13 @@ def compute_method(method: str, c_bytes: bytes, _cv: str = "5"):
     if method == "MCDA":          return mcda.compute(ch)
 
 
-# ─── Porte « Lancer l'analyse » : rien ne se calcule tant que l'utilisateur ──
-# n'a pas cliqué. La signature des données réarme la porte à tout changement de
-# base/colonne/filtre (mais pas au déplacement de u* ni à l'ajout d'une méthode).
-_analysis_sig = (uploaded.name, sheet_name, col_selected, n, range_note,
-                 excl_nan, excl_neg, excl_zero, tuple(sorted(applied_filters)))
-if st.session_state.get("analysis_sig") != _analysis_sig:
-    st.session_state["analysis_sig"] = _analysis_sig
-    st.session_state["analysis_ran"] = False
-
+# Rien n'est calculé tant qu'aucune méthode n'est cochée : dès que l'utilisateur
+# en sélectionne une dans le panneau latéral, Streamlit relance le script et la
+# méthode choisie s'affiche aussitôt (calcul mis en cache par méthode).
 if not selected_methods:
-    st.info("Sélectionnez au moins une méthode dans le panneau latéral, "
-            "puis cliquez sur « Lancer l'analyse ».")
+    st.info("Sélectionnez une ou plusieurs méthodes dans le panneau latéral "
+            "pour afficher les analyses.")
     st.stop()
-
-if not st.session_state.get("analysis_ran"):
-    if st.button("Lancer l'analyse", type="primary"):
-        st.session_state["analysis_ran"] = True
-    else:
-        st.info("Cliquez sur « Lancer l'analyse » pour calculer les "
-                "méthodes sélectionnées.")
-        st.stop()
 
 # Gerstengarbe est en O(n²) : on prévient avant un calcul potentiellement long
 # (le résultat est ensuite mis en cache, donc une seule fois par jeu de données).
