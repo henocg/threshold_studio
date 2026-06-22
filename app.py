@@ -138,6 +138,15 @@ def fmt_M(v):
         return f"{v/1e6:.2f} M€"
     return f"{v/1e3:.0f} k€"
 
+def fmt_seuil(v):
+    """Montant lisible avec précision adaptée : évite que des seuils proches
+    s'affichent tous « 1 k€ » (petits montants rendus en € exacts)."""
+    if v < 1e4:
+        return f"{v:,.0f} €".replace(",", " ")
+    if v < 1e6:
+        return f"{v/1e3:,.1f} k€".replace(",", " ")
+    return f"{v/1e6:.2f} M€"
+
 STATUS_COLORS = {"ok": "#137A45", "warn": "#B45309", "bad": "#B22A2A"}
 
 
@@ -343,28 +352,48 @@ with st.sidebar:
 
     # ── 04 Seuil u* ───────────────────────────────────────────────────────
     st.markdown("**04 : Seuil  u***")
-    u_min = float(np.nanpercentile(charges, 40))
-    u_max = float(np.nanpercentile(charges, 97))
+    u_min = float(np.nanmin(charges))
+    u_max = float(np.nanmax(charges))
     if u_min >= u_max:
-        u_max = float(np.nanmax(charges))
+        u_max = u_min + 1.0
     default_u = float(np.clip(np.nanpercentile(charges, 75), u_min, u_max))
 
-    # État géré par Streamlit via key="u_val" (évite le décalage d'un rerun).
-    # On (ré)ajuste la valeur stockée dans la plage courante : les bornes
-    # changent si le fichier/les filtres changent, sinon la valeur serait hors limites.
+    # Clé maîtresse "u_val" : seule source de vérité, clippée dans la plage
+    # courante (les bornes changent si le fichier/les filtres changent, sinon la
+    # valeur serait hors limites). Le slider et le champ numérique sont deux
+    # widgets distincts synchronisés sur cette maîtresse via leurs callbacks.
     if "u_val" not in st.session_state:
         st.session_state["u_val"] = default_u
     else:
         st.session_state["u_val"] = float(np.clip(st.session_state["u_val"], u_min, u_max))
 
-    u_selected = st.slider(
+    # Ré-amorçage des états widgets depuis la maîtresse (avant instanciation).
+    st.session_state["u_slider"] = st.session_state["u_val"]
+    st.session_state["u_num"]    = st.session_state["u_val"]
+
+    def _u_from_slider():
+        st.session_state["u_val"] = st.session_state["u_slider"]
+
+    def _u_from_num():
+        st.session_state["u_val"] = st.session_state["u_num"]
+
+    _us1, _us2 = st.columns([3, 1])
+    _us1.slider(
         "Seuil u* (€)",
         min_value=u_min, max_value=u_max,
         step=max(1000.0, (u_max - u_min) / 100),
         format="%.0f",
         label_visibility="collapsed",
-        key="u_val",
+        key="u_slider", on_change=_u_from_slider,
     )
+    _us2.number_input(
+        "Seuil exact (€)",
+        min_value=u_min, max_value=u_max,
+        step=1000.0, format="%.0f",
+        label_visibility="collapsed",
+        key="u_num", on_change=_u_from_num,
+    )
+    u_selected = st.session_state["u_val"]
 
     exceedances = int(np.sum(charges > u_selected))
     pct_exc     = exceedances / n * 100
@@ -589,32 +618,55 @@ def _chart_card(title, hint, fig):
 # Guides de lecture en langage simple (public non familier de l'EVT).
 HOW_TO_READ = {
     "MRL":
-        "**Axe horizontal :** le seuil testé (en k€). **Axe vertical :** le montant moyen "
-        "qui dépasse ce seuil.\n\n"
-        "**À chercher :** l'endroit à partir duquel la courbe devient une ligne à peu près "
-        "**droite** : c'est un bon candidat de seuil. Le graphe de droite montre combien de "
-        "sinistres dépassent chaque seuil : méfiez-vous des zones où il en reste très peu.",
+        "**But :** trouver le seuil u* au-delà duquel les excès suivent une loi GPD.\n\n"
+        "**Axes :** en abscisse le seuil u testé (en k€) ; en ordonnée la moyenne des excès "
+        "e(u) = moyenne de (X − u) pour les sinistres X > u, c'est-à-dire le montant moyen "
+        "qui dépasse le seuil.\n\n"
+        "**Comment lire :** repérez l'abscisse à partir de laquelle la courbe devient une ligne "
+        "**approximativement droite** (montante mais régulière). Ce début de zone linéaire est un "
+        "bon candidat u* : au-delà, l'hypothèse GPD tient.\n\n"
+        "**Pièges :** tout à droite il ne reste que **très peu de sinistres** au-dessus du seuil, "
+        "donc la courbe devient bruitée et instable ; ne fondez pas votre choix sur cette zone.",
     "Hill":
-        "Chaque point estime le « poids » de la queue de distribution selon le nombre de plus "
-        "grosses valeurs prises en compte.\n\n"
-        "**À chercher :** une zone où la courbe reste à peu près **plate** (un palier) ; le seuil "
-        "correspondant est un bon candidat. À n'utiliser que pour des distributions à queue lourde.",
+        "**But :** estimer l'indice de queue ξ et en déduire le seuil u*.\n\n"
+        "**Axes :** en abscisse le seuil u (en k€) ; en ordonnée l'estimation ξ̂ du poids de la "
+        "queue, calculée à partir des sinistres au-dessus de ce seuil.\n\n"
+        "**Comment lire :** parcourez la courbe et cherchez la première zone où elle devient "
+        "**à peu près plate (un plateau)**. L'abscisse où ce plateau commence est un bon candidat "
+        "u*, et sa hauteur donne l'indice de queue ξ.\n\n"
+        "**Pièges :** à gauche (seuils bas) la courbe est gonflée par le corps de la distribution ; "
+        "à droite (seuils élevés) elle devient bruitée car il reste peu de points. Méthode valable "
+        "uniquement pour ξ > 0 (queue lourde).",
     "Gerstengarbe":
-        "Deux courbes sont tracées. Le **point où elles se croisent** marque une rupture dans les "
-        "données : la frontière entre sinistres « normaux » et « extrêmes ».\n\n"
-        "**À faire :** survolez le croisement pour lire directement le seuil correspondant.",
+        "**But :** localiser la rupture entre sinistres « normaux » et « extrêmes ».\n\n"
+        "**Comment lire :** deux courbes sont tracées, l'une décroissante et l'autre croissante. "
+        "Leur **point d'intersection** marque le changement de régime : son abscisse est le seuil "
+        "u* détecté.\n\n"
+        "**Astuce :** survolez le croisement pour lire directement la valeur du seuil. Contrairement "
+        "à Hill, cette méthode est valable quel que soit le signe de ξ.",
     "GPD Stabilité":
-        "**À chercher :** sur chaque courbe, l'endroit à partir duquel elle devient à peu près "
-        "**horizontale (plate)** ; au-delà, le modèle est fiable.\n\n"
-        "La couleur des points indique la qualité de l'ajustement (jaune = bon, violet = moins bon).",
+        "**But :** trouver le seuil au-delà duquel les paramètres du modèle GPD ne bougent plus.\n\n"
+        "**Axes :** en abscisse le seuil u ; en ordonnée les paramètres estimés du modèle GPD "
+        "(ξ̂ et σ* modifié).\n\n"
+        "**Comment lire :** sur chaque courbe, repérez l'endroit à partir duquel elle devient "
+        "**horizontale (plate)** et le reste. Ce début de stabilité est le seuil u* : au-delà, "
+        "l'ajustement GPD est fiable.\n\n"
+        "**Couleur des points :** elle indique la qualité de l'ajustement (jaune = bon, violet = "
+        "moins bon) ; privilégiez un plateau situé dans une zone jaune.",
     "MCDA":
-        "Cette méthode combine plusieurs mesures de qualité pour **noter chaque seuil possible**.\n\n"
-        "**À retenir :** le meilleur seuil est celui qui obtient le **score le plus bas**.",
+        "**But :** laisser la méthode noter automatiquement chaque seuil possible.\n\n"
+        "**Comment lire :** la courbe donne un **score** qui combine plusieurs mesures de qualité "
+        "d'ajustement (KS, χ², RMSE) pour chaque seuil candidat. **Le meilleur seuil est celui dont "
+        "le score est le plus bas** (le minimum de la courbe).\n\n"
+        "**À retenir :** pas de plateau à chercher ici ; on lit directement le point le plus bas.",
     "PELT & Jenks":
-        "Ces deux méthodes **découpent la distribution en plusieurs tranches**. Les traits "
-        "verticaux marquent les seuils détectés.\n\n"
-        "**Réglages :** augmentez la pénalité (PELT) pour obtenir **moins** de seuils ; ajustez le "
-        "nombre de classes (Jenks). L'échelle « log » convient mieux aux montants très étalés.",
+        "**But :** découper automatiquement la distribution en plusieurs tranches et en déduire "
+        "des seuils.\n\n"
+        "**Comment lire :** les **traits verticaux** marquent les seuils détectés ; chaque trait "
+        "sépare deux régimes de montants.\n\n"
+        "**Réglages :** augmentez la **pénalité (PELT)** pour obtenir **moins** de seuils, "
+        "diminuez-la pour en avoir plus ; ajustez le **nombre de classes (Jenks)**. L'échelle "
+        "**log** convient mieux aux montants très étalés.",
 }
 
 
@@ -624,6 +676,21 @@ def _how_to_read(method: str):
     if txt:
         with st.expander("Comment lire ce graphique ?"):
             st.markdown(txt)
+
+
+def _set_global_u(value: float):
+    """Callback : adopte `value` comme seuil global u* (clé maîtresse u_val)."""
+    st.session_state["u_val"] = float(value)
+
+
+def _use_threshold_button(method: str, value: float):
+    """Bouton : adopte le u* détecté comme seuil global (propagé à toute l'app)."""
+    st.button(
+        f"⤒ Utiliser {fmt_seuil(value)} comme seuil u* global",
+        key=f"use_u_{method}",
+        on_click=_set_global_u, args=(value,),
+        use_container_width=True,
+    )
 
 
 def _seuil_retenu_input(method: str, default: float) -> dict:
@@ -658,7 +725,7 @@ def _retenu_str(r: dict) -> str:
         if not vals:
             return "Aucun seuil détecté"
         return ", ".join(
-            f"{v/1e3:.0f} k€ (P{float(np.mean(charges <= v)) * 100:.0f})" for v in vals)
+            f"{fmt_seuil(v)} (P{float(np.mean(charges <= v)) * 100:.0f})" for v in vals)
     if r["mode"] == "Intervalle":
         lo, hi = sorted([r["lo"], r["hi"]])
         return f"{lo/1e3:.0f} – {hi/1e3:.0f} k€"
@@ -722,9 +789,9 @@ TAB_DESC = {
     "MRL":          ("Mean Residual Life",
                      "e(u) = E[X−u | X>u]. La courbe doit devenir linéaire et croissante au-dessus de u*."),
     "Hill":         ("Hill estimator",
-                     "Estime le « poids » de la queue de distribution selon le nombre k de plus grandes "
-                     "valeurs retenues. On choisit un seuil dans la plage de k où la courbe se stabilise "
-                     "(plateau). Méthode réservée aux distributions à queue lourde."),
+                     "Estime le « poids » (l'indice ξ) de la queue de distribution. On lit ξ̂ en fonction "
+                     "du seuil u : on choisit u* là où la courbe se stabilise (plateau horizontal). "
+                     "Méthode réservée aux distributions à queue lourde (ξ > 0)."),
     "Gerstengarbe": ("Gerstengarbe",
                      "Test séquentiel : intersection de −H_k (décroissante) et H̃_k (croissante). Valide pour tout ξ."),
     "GPD Stabilité":("GPD Stabilité",
@@ -780,6 +847,7 @@ if "Gerstengarbe" in tab_map:
         fig_gers = gerstengarbe.plot(gers_res)
         _chart_card(title, hint, fig_gers)
         _how_to_read("Gerstengarbe")
+        _use_threshold_button("Gerstengarbe", gers_res.get("u_star", u_selected))
         retained["Gerstengarbe"] = _seuil_retenu_input(
             "Gerstengarbe", gers_res.get("u_star", u_selected))
 
@@ -807,6 +875,7 @@ if "MCDA" in tab_map:
                     f'<b>{crit}</b>  w = {w:.3f}  E = {e:.4f}</div>',
                     unsafe_allow_html=True,
                 )
+            _use_threshold_button("MCDA", mcda_res["u_star"])
             retained["MCDA"] = _seuil_retenu_input("MCDA", mcda_res["u_star"])
         else:
             st.warning("MCDA : pas assez de candidats valides.")
@@ -823,7 +892,7 @@ if "PELT & Jenks" in tab_map:
         _unit = "ln(charges)" if use_log else "charges (€)"
 
         _pc1, _pc2 = st.columns(2)
-        pen     = _pc1.slider("Pénalité PELT", 0.5, 20.0, 5.0, step=0.5, key="pelt_pen",
+        pen     = _pc1.slider("Pénalité PELT", 0.5, 100.0, 5.0, step=0.5, key="pelt_pen",
                                help=f"Pénalité de PELT sur {_unit}. Pénalité basse ⇒ "
                                     "plus de ruptures ; pénalité haute ⇒ moins de ruptures.")
         jenks_k = _pc2.slider("Classes Jenks (k)", 2, 6, 4, key="jenks_k",
@@ -841,16 +910,16 @@ if "PELT & Jenks" in tab_map:
                 '<b>Seuils détectés</b></div>',
                 unsafe_allow_html=True,
             )
-            _cols = st.columns(max(len(_pelt_u) + len(_jenks_v), 1))
-            _ci = 0
-            for i, pu in enumerate(_pelt_u):
-                pct = float(np.mean(charges <= pu)) * 100
-                _cols[_ci].metric(f"PELT {i+1}", f"{pu/1e3:.0f} k€", f"P{pct:.0f}")
-                _ci += 1
-            for i, jv in enumerate(_jenks_v):
-                pct = float(np.mean(charges <= jv)) * 100
-                _cols[_ci].metric(f"Jenks {i+1}", f"{jv/1e3:.0f} k€", f"P{pct:.0f}")
-                _ci += 1
+            _items = ([(f"PELT {i+1}", pu) for i, pu in enumerate(_pelt_u)]
+                      + [(f"Jenks {i+1}", jv) for i, jv in enumerate(_jenks_v)])
+            # Grille enroulée : 4 seuils par ligne pour garder des cartes lisibles
+            # même quand beaucoup de ruptures sont détectées.
+            _PER_ROW = 4
+            for _start in range(0, len(_items), _PER_ROW):
+                _row = st.columns(_PER_ROW)
+                for _c, (_label, _val) in zip(_row, _items[_start:_start + _PER_ROW]):
+                    _pct = float(np.mean(charges <= _val)) * 100
+                    _c.metric(_label, fmt_seuil(_val), f"P{_pct:.0f}")
         # Détection multi-seuils : on recopie directement les seuils détectés
         # (pilotés par la pénalité pour PELT, par k pour Jenks) : pas de saisie.
         retained["PELT"]  = {"mode": "Seuils détectés", "values": list(_pelt_u)}

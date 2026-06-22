@@ -11,9 +11,8 @@ ATTENTION : Hill n'est valable que pour ξ > 0 (queue épaisse, Fréchet).
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
-from utils.style import PURPLE, ORANGE, GRIS, apply_layout
+from utils.style import ORANGE, GRIS, apply_layout
 
 
 def compute(charges: np.ndarray) -> pd.DataFrame:
@@ -41,56 +40,29 @@ def compute(charges: np.ndarray) -> pd.DataFrame:
 
 
 def plot(df: pd.DataFrame, u_selected: float) -> go.Figure:
-    """Graphe de Hill en deux panneaux : (A) ξ̂ vs k  |  (B) ξ̂ vs seuil u.
+    """Graphe de Hill : ξ̂ en fonction du seuil u (lecture directe en euros).
 
-    Les deux vues sont équivalentes (k ↔ u = X_(n−k)) ; on choisit u* dans la
-    zone où ξ̂ se stabilise (plateau horizontal).
+    On choisit u* dans la zone où ξ̂ se stabilise (plateau horizontal).
     """
-    fig = make_subplots(
-        rows=1, cols=2,
-        subplot_titles=["(A) ξ̂_k^H vs k  (ordre statistique)",
-                        "(B) ξ̂_k^H vs seuil u"],
-        horizontal_spacing=0.12,
-    )
+    fig = go.Figure()
 
-    # (A) Bande de confiance 95 % autour de ξ̂(k).
-    fig.add_trace(go.Scatter(
-        x=np.concatenate([df["k"], df["k"].values[::-1]]),
-        y=np.concatenate([df["hi"], df["lo"].values[::-1]]),
-        fill="toself", fillcolor="rgba(114,39,160,0.10)",
-        line=dict(color="rgba(0,0,0,0)"),
-        hoverinfo="skip", name="IC 95%",
-    ), row=1, col=1)
-
-    # (A) Courbe de Hill ξ̂(k) : repérer le plateau.
-    fig.add_trace(go.Scatter(
-        x=df["k"], y=df["xi"],
-        mode="lines", line=dict(color=PURPLE, width=1.8),
-        name="ξ̂_k^H", customdata=df["u"],
-        hovertemplate="k = %{x}<br>ξ̂ = %{y:.4f}<br>u = %{customdata:.0f} €<extra></extra>",
-    ), row=1, col=1)
-
-    # Ligne ξ = 0 : frontière de validité (Hill suppose ξ > 0).
-    fig.add_hline(y=0, line_dash="dot", line_color=GRIS, line_width=1, row=1, col=1)
-
-    # (B) Même estimateur mais en fonction du seuil u (lecture en euros).
+    # ξ̂ en fonction du seuil u (lecture en euros) : repérer le plateau.
     fig.add_trace(go.Scatter(
         x=df["u"] / 1e3, y=df["xi"],
         mode="lines", line=dict(color=ORANGE, width=1.8),
         name="ξ̂ vs u", customdata=df["k"],
         hovertemplate="u = %{x:.0f} k€<br>ξ̂ = %{y:.4f}<br>k = %{customdata}<extra></extra>",
-    ), row=1, col=2)
+    ))
 
     fig.add_vline(x=u_selected / 1e3, line_dash="dash",
                   line_color=ORANGE, line_width=2,
                   annotation_text=f"u* = {u_selected/1e3:.0f} k€",
                   annotation_position="top right",
-                  annotation_font_color=ORANGE, row=1, col=2)
-    fig.add_hline(y=0, line_dash="dot", line_color=GRIS, line_width=1, row=1, col=2)
+                  annotation_font_color=ORANGE)
+    # Ligne ξ = 0 : frontière de validité (Hill suppose ξ > 0).
+    fig.add_hline(y=0, line_dash="dot", line_color=GRIS, line_width=1)
 
-    fig.update_xaxes(title_text="k  :  ordre statistique", row=1, col=1)
-    fig.update_xaxes(title_text="Seuil u (k€)", row=1, col=2)
-    fig.update_yaxes(title_text="ξ̂ (Hill)", row=1, col=1)
-    fig.update_yaxes(title_text="ξ̂ (Hill)", row=1, col=2)
+    fig.update_xaxes(title_text="Seuil u (k€)")
+    fig.update_yaxes(title_text="ξ̂ (Hill)")
     apply_layout(fig)
     return fig

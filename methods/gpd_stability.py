@@ -27,10 +27,9 @@ def compute(charges: np.ndarray, n_points: int = 100) -> pd.DataFrame:
             continue
         try:
             xi, _, sigma = st.genpareto.fit(exc, floc=0)             # MLE de la GPD
-            _, ks_pval   = st.kstest(exc, "genpareto", args=(xi, 0, sigma))  # qualité d'ajustement
             rows.append({"u": u, "xi": xi, "sigma": sigma,
                          "sigma_star": sigma - xi * u,   # échelle modifiée (doit être constante)
-                         "ks_pval": ks_pval, "r": len(exc)})
+                         "r": len(exc)})
         except Exception:                            # MLE qui ne converge pas → on saute ce seuil
             continue
     return pd.DataFrame(rows)
@@ -39,8 +38,8 @@ def compute(charges: np.ndarray, n_points: int = 100) -> pd.DataFrame:
 def plot(df: pd.DataFrame, u_selected: float) -> go.Figure:
     """Graphe de stabilité GPD : (A) ξ̂(u) vs u  |  (B) σ*(u) vs u.
 
-    On cherche le seuil à partir duquel chaque courbe devient plate ; la couleur
-    des points encode la qualité d'ajustement (p-value KS) pour aider à trancher.
+    On cherche le seuil à partir duquel chaque courbe devient plate ; en (B) la
+    couleur des points encode le nombre d'excès r (qui diminue quand u monte).
     """
     fig = make_subplots(
         rows=1, cols=2,
@@ -51,16 +50,14 @@ def plot(df: pd.DataFrame, u_selected: float) -> go.Figure:
         horizontal_spacing=0.14,
     )
 
-    # (A) ξ̂(u) ; couleur = p-value KS (vert/jaune = bon ajustement).
+    # (A) ξ̂(u) ; points unis (bleu marine, couleur de la courbe).
     fig.add_trace(go.Scatter(
         x=df["u"] / 1e3, y=df["xi"],
         mode="lines+markers",
-        line=dict(color=NAVY, width=2.5),
-        marker=dict(size=8, color=df["ks_pval"], colorscale="Viridis",
-                    showscale=True, cmin=0, cmax=1,
-                    colorbar=dict(title="KS p-val", x=0.44, len=0.85, thickness=12)),
+        line=dict(color=NAVY, width=2),
+        marker=dict(size=5, color=NAVY),
         name="ξ̂(u)",
-        hovertemplate="u = %{x:.0f} k€<br>ξ̂ = %{y:.4f}<br>KS p = %{marker.color:.3f}<extra></extra>",
+        hovertemplate="u = %{x:.0f} k€<br>ξ̂ = %{y:.4f}<extra></extra>",
     ), row=1, col=1)
 
     fig.add_hline(y=0, line_dash="dot", line_color=GRIS, line_width=1, row=1, col=1)
@@ -70,19 +67,14 @@ def plot(df: pd.DataFrame, u_selected: float) -> go.Figure:
                   annotation_position="top right",
                   annotation_font_color=ORANGE, row=1, col=1)
 
-    # (B) σ*(u) = σ − ξu ; couleur = nombre d'excès r (diminue quand u monte).
-    # Échelle Viridis (jamais blanche) + contour des marqueurs → tous les points
-    # restent visibles, même ceux à faible r (sinon ils disparaissaient en blanc).
+    # (B) σ*(u) = σ − ξu ; points unis (orange, couleur de la courbe).
     fig.add_trace(go.Scatter(
         x=df["u"] / 1e3, y=df["sigma_star"] / 1e3,
         mode="lines+markers",
-        line=dict(color=ORANGE, width=2.5),
-        marker=dict(size=8, color=df["r"], colorscale="Viridis",
-                    showscale=True, cmin=df["r"].min(), cmax=df["r"].max(),
-                    line=dict(width=0.8, color="#3A4252"),
-                    colorbar=dict(title="r (excès)", x=1.01, len=0.85, thickness=12)),
+        line=dict(color=ORANGE, width=2),
+        marker=dict(size=5, color=ORANGE),
         name="σ*(u)",
-        hovertemplate="u = %{x:.0f} k€<br>σ* = %{y:.1f} k€<br>r = %{marker.color:.0f} excès<extra></extra>",
+        hovertemplate="u = %{x:.0f} k€<br>σ* = %{y:.1f} k€<extra></extra>",
     ), row=1, col=2)
 
     fig.add_hline(y=0, line_dash="dot", line_color=GRIS, line_width=1, row=1, col=2)
@@ -95,5 +87,5 @@ def plot(df: pd.DataFrame, u_selected: float) -> go.Figure:
     fig.update_xaxes(title_text="Seuil u (k€)")
     fig.update_yaxes(title_text="ξ̂(u)  :  indice de forme GPD", row=1, col=1)
     fig.update_yaxes(title_text="σ*(u) = σ − ξu  (k€)",         row=1, col=2)
-    apply_layout(fig, margin_r=80)
+    apply_layout(fig)
     return fig
