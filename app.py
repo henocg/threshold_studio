@@ -245,7 +245,7 @@ def _is_qualitative(series, col_selected: str) -> bool:
 # ─── Sidebar : Partie 2 : contrôles d'analyse ────────────────────────────────
 with st.sidebar:
     # ── 02 Variables ──────────────────────────────────────────────────────
-    st.markdown("**02 : Variables**")
+    st.markdown("**02 : Variables**")  
     num_cols = df_raw.select_dtypes(include=np.number).columns.tolist()
     if not num_cols:
         st.error("Aucune colonne numérique.")
@@ -678,21 +678,6 @@ def _how_to_read(method: str):
             st.markdown(txt)
 
 
-def _set_global_u(value: float):
-    """Callback : adopte `value` comme seuil global u* (clé maîtresse u_val)."""
-    st.session_state["u_val"] = float(value)
-
-
-def _use_threshold_button(method: str, value: float):
-    """Bouton : adopte le u* détecté comme seuil global (propagé à toute l'app)."""
-    st.button(
-        f"⤒ Utiliser {fmt_seuil(value)} comme seuil u* global",
-        key=f"use_u_{method}",
-        on_click=_set_global_u, args=(value,),
-        use_container_width=True,
-    )
-
-
 def _seuil_retenu_input(method: str, default: float) -> dict:
     """Saisie du seuil retenu pour une méthode : valeur unique ou intervalle (€)."""
     st.markdown(
@@ -847,7 +832,6 @@ if "Gerstengarbe" in tab_map:
         fig_gers = gerstengarbe.plot(gers_res)
         _chart_card(title, hint, fig_gers)
         _how_to_read("Gerstengarbe")
-        _use_threshold_button("Gerstengarbe", gers_res.get("u_star", u_selected))
         retained["Gerstengarbe"] = _seuil_retenu_input(
             "Gerstengarbe", gers_res.get("u_star", u_selected))
 
@@ -875,7 +859,6 @@ if "MCDA" in tab_map:
                     f'<b>{crit}</b>  w = {w:.3f}  E = {e:.4f}</div>',
                     unsafe_allow_html=True,
                 )
-            _use_threshold_button("MCDA", mcda_res["u_star"])
             retained["MCDA"] = _seuil_retenu_input("MCDA", mcda_res["u_star"])
         else:
             st.warning("MCDA : pas assez de candidats valides.")
